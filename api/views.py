@@ -329,6 +329,9 @@ def adp_chat_stream(request):
 
 # $body | curl.exe -N "http://127.0.0.1:8000/api/chat/stream/" -H "Content-Type: application/json;charset=utf-8" -H "X-API-Key: test-key-123" --data-binary "@-"
 
+# uvicorn mysite.asgi:application --host 0.0.0.0 --port 8000 --reload
+
+
 
 
 

@@ -10,5 +10,5 @@ urlpatterns = [
     path("hotel/search/", HotelSearchAPIView.as_view()),
     path("chat/stream/", ChatStreamAPIView.as_view()),
     path("session/cancel/", CancelSessionAPIView.as_view()),
-    path("api/chat/stream/", views.adp_chat_stream),
+    path("chat/stream/", views.adp_chat_stream),
 ]
