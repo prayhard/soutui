@@ -3,6 +3,7 @@ from channels.generic.websocket import AsyncWebsocketConsumer
 from websockets.exceptions import ConnectionClosed
 from api.utils.tencent_asr import build_tencent_asr_ws_url
 from api.utils.tencent_tts import build_tencent_tts_ws_url
+from api.utils.adp_stream import adp_stream_reply
 import os
 from dotenv import load_dotenv
 load_dotenv()
@@ -197,3 +198,158 @@ class TencentTTSConsumer(AsyncWebsocketConsumer):
             except Exception:
                 pass
             self.tc_ws = None
+
+#========================================================================================================================
+
+class New_TencentPCMAsrConsumer(AsyncWebsocketConsumer):
+    async def connect(self):
+        await self.accept()
+
+        # === 由前端 init 注入（必须） ===
+        self.session_id = None
+        self.visitor_biz_id = None
+        self.app = "d"
+        self.streaming_throttle = 10
+
+        self.ending = False
+        self.last_asr_text = ""   # 保存 final 前最后一次识别文本（简单实现）
+
+        # === 连接腾讯 ASR ===
+        self.tc_url = build_tencent_asr_ws_url(
+            appid=os.getenv("APPID"),
+            secret_id=os.getenv("SecretId"),
+            secret_key=os.getenv("SecretKey"),
+            engine_model_type="16k_zh",
+            voice_format=1,
+            expired_seconds=300,
+        )
+
+        self.tc_ws = await websockets.connect(
+            self.tc_url,
+            ping_interval=20,
+            ping_timeout=20,
+            close_timeout=2,
+            max_size=None,
+        )
+
+        self.recv_task = asyncio.create_task(self._recv_from_tencent())
+
+        await self.send(text_data=json.dumps({"type": "ready"}))
+
+    async def receive(self, text_data=None, bytes_data=None):
+        try:
+            # 1) init / end 等控制消息
+            if text_data:
+                msg = json.loads(text_data)
+
+                if msg.get("type") == "init":
+                    # 前端连接后务必先发 init
+                    self.session_id = msg.get("session_id")
+                    self.visitor_biz_id = msg.get("visitor_biz_id")
+                    self.app = msg.get("app", "d")
+                    self.streaming_throttle = msg.get("streaming_throttle", 10)
+
+                    await self.send(text_data=json.dumps({"type": "init_ok"}))
+                    return
+
+                if msg.get("type") == "end":
+                    self.ending = True
+                    # 发 end 给腾讯云（按你之前逻辑）
+                    await self.tc_ws.send(json.dumps({"type": "end"}))
+                    return
+
+            # 2) 音频帧
+            if bytes_data:
+                await self.tc_ws.send(bytes_data)
+
+        except ConnectionClosed:
+            await self.close(code=1011)
+        except Exception as e:
+            await self.send(text_data=json.dumps({"type": "error", "detail": f"receive_failed: {e}"}))
+            await self.close(code=1011)
+
+    async def _recv_from_tencent(self):
+        try:
+            async for msg in self.tc_ws:
+                data = json.loads(msg)
+
+                # 1) 仍然透传给前端（你原来的行为）
+                await self.send(text_data=json.dumps({"type": "asr_raw", "data": data}, ensure_ascii=False))
+
+                # 2) 尝试抓取识别文本
+                asr_text = ""
+                if isinstance(data, dict) and data.get("result"):
+                    asr_text = data["result"].get("voice_text_str") or ""
+                    if asr_text:
+                        self.last_asr_text = asr_text
+                        await self.send(text_data=json.dumps({"type": "asr_partial", "text": asr_text}, ensure_ascii=False))
+
+                # 3) final=1：触发智能体
+                if isinstance(data, dict) and data.get("final") == 1:
+                    final_text = (asr_text or self.last_asr_text).strip()
+                    await self.send(text_data=json.dumps({"type": "asr_final", "text": final_text}, ensure_ascii=False))
+
+                    # 必要参数校验
+                    if not final_text:
+                        await self.send(text_data=json.dumps({"type": "error", "detail": "empty final_text"}))
+                        continue
+                    if not self.session_id or not self.visitor_biz_id:
+                        await self.send(text_data=json.dumps({
+                            "type": "error",
+                            "detail": "missing session_id / visitor_biz_id, please send init first"
+                        }))
+                        continue
+
+                    # === 调 ADP，流式把回复推回前端 ===
+                    await self._run_adp(final_text)
+
+                    # 如果你希望一句结束就断开 WS（不建议），打开这行：
+                    # await self.close(code=1000)
+                    # break
+
+        except ConnectionClosed:
+            try:
+                await self.send(text_data=json.dumps({"type": "error", "detail": "tencent ws closed"}))
+            except:
+                pass
+            await self.close(code=1011)
+        except Exception as e:
+            try:
+                await self.send(text_data=json.dumps({"type": "error", "detail": f"asr_recv_failed: {e}"}))
+            except:
+                pass
+            await self.close(code=1011)
+        finally:
+            try:
+                await self.tc_ws.close()
+            except:
+                pass
+
+    async def _run_adp(self, user_text: str):
+        await self.send(text_data=json.dumps({"type": "bot_start"}, ensure_ascii=False))
+        try:
+            async for delta in adp_stream_reply(
+                session_id=self.session_id,
+                visitor_biz_id=self.visitor_biz_id,
+                app=self.app,
+                content=user_text,
+                streaming_throttle=self.streaming_throttle,
+            ):
+                await self.send(text_data=json.dumps({"type": "bot_delta", "delta": delta}, ensure_ascii=False))
+        except Exception as e:
+            await self.send(text_data=json.dumps({"type": "error", "detail": f"adp_failed: {e}"}))
+            return
+
+        await self.send(text_data=json.dumps({"type": "bot_done"}, ensure_ascii=False))
+
+    async def disconnect(self, close_code):
+        try:
+            if hasattr(self, "recv_task"):
+                self.recv_task.cancel()
+        except:
+            pass
+        try:
+            if hasattr(self, "tc_ws"):
+                await self.tc_ws.close()
+        except:
+            pass
