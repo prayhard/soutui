@@ -87,24 +87,27 @@ WSGI_APPLICATION = 'mysite.wsgi.application'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
 
+import os
+
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = os.getenv("DB_PORT", "3306")
+DB_NAME = os.getenv("DB_NAME", "soutui_db")
+DB_USER = os.getenv("DB_USER", "soutui")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "123456")
+
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.mysql",
-        "HOST": 'localhost',
-        "PORT": os.getenv("DB_PORT", "3306"),
-        "USER": 'soutui',
-        "PASSWORD": "123456",
-        "NAME": 'soutui_db',
+        "HOST": DB_HOST,
+        "PORT": DB_PORT,
+        "NAME": DB_NAME,
+        "USER": DB_USER,
+        "PASSWORD": DB_PASSWORD,
         "OPTIONS": {
-            "charset": os.getenv("DB_CHARSET", "utf8mb4"),
+            "charset": "utf8mb4",
         },
     }
 }
-
-print("DB_USER =", DATABASES["default"]["USER"])
-print("DB_HOST =", DATABASES["default"]["HOST"])
-print("DB_NAME =", DATABASES["default"]["NAME"])
-print("DB_PASSWORD_EMPTY =", DATABASES["default"]["PASSWORD"] in [None, ""])
 
 
 
@@ -182,14 +185,18 @@ REST_FRAMEWORK = {
 
 
 
+REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
+REDIS_PORT = os.getenv("REDIS_PORT", "6379")
+REDIS_DB = os.getenv("REDIS_DB", "1")
+
 CACHES = {
-  "default": {"BACKEND": "django_redis.cache.RedisCache",
-              "LOCATION": "redis://127.0.0.1:6379/1",
-              "OPTIONS": {
-                "CLIENT_CLASS": "django_redis.client.DefaultClient",
-            # "PASSWORD": "mysecret"
-              }
-            }
+    "default": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}",
+        "OPTIONS": {
+            "CLIENT_CLASS": "django_redis.client.DefaultClient",
+        },
+    }
 }
 from corsheaders.defaults import default_headers
 

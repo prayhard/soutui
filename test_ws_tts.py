@@ -12,7 +12,7 @@ from api.utils.tencent_tts import build_tencent_tts_ws_url
 TEXT = "你好，我是你的酒店助手。欢迎入住，祝您旅途愉快。"
 
 # ============ 输出设置 ============
-CODEC = "mp3"   # "mp3" or "pcm"  （文档示例里 Codec=pcm）:contentReference[oaicite:1]{index=1}
+CODEC = "pcm"   # "mp3" or "pcm"  （文档示例里 Codec=pcm）:contentReference[oaicite:1]{index=1}
 OUT_BASENAME = "tts_out"
 
 # PCM/WAV 参数（仅当 CODEC="pcm" 时用）

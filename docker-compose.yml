@@ -1,0 +1,54 @@
+services:
+  db:
+    image: mysql:8.0
+    container_name: soutui_mysql
+    command: --default-authentication-plugin=mysql_native_password
+    environment:
+      MYSQL_DATABASE: soutui_db
+      MYSQL_USER: soutui
+      MYSQL_PASSWORD: 123456
+      MYSQL_ROOT_PASSWORD: rootpass
+      TZ: Asia/Shanghai
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    container_name: soutui_redis
+    ports:
+      - "6379:6379"
+
+  web:
+    build: .
+    container_name: soutui_web
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      DJANGO_SETTINGS_MODULE: mysite.settings
+      DB_HOST: db
+      DB_PORT: "3306"
+      DB_NAME: soutui_db
+      DB_USER: soutui
+      DB_PASSWORD: 123456
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    command: >
+      sh -c "python manage.py migrate &&
+             python manage.py runserver 0.0.0.0:8000"
+
+volumes:
+  mysql_data:
