@@ -145,7 +145,7 @@ class ApiClient(models.Model):
     name = models.CharField(max_length=64)
     api_key = models.CharField(max_length=128, unique=True, db_index=True)
     is_active = models.BooleanField(default=True)
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
+    # user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
 
     created_at = models.DateTimeField(auto_now_add=True)
     last_seen_at = models.DateTimeField(null=True, blank=True)

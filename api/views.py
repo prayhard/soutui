@@ -13,6 +13,9 @@ from .models import Hotel, HotelRoomOffer
 from .serializers import HotelSearchSerializer, TencentSSESerializer
 from .throttles import ChatRateThrottle
 from .usage import UsageRecorder
+from .permissions import HasValidApiKey
+from rest_framework.decorators import api_view, authentication_classes, permission_classes
+from .auth import ApiKeyAuth
 from dotenv import load_dotenv
 load_dotenv()
 # ======================
@@ -43,7 +46,8 @@ class HotelSearchAPIView(APIView):
       "hotel_name": ["北京贵宾楼饭店", "北京香江意舍酒店"]
     }
     """
-    permission_classes = [IsAuthenticated]
+    authentication_classes = [ApiKeyAuth]
+    permission_classes = [HasValidApiKey]
     def post(self, request):
         print("content_type:", request.META.get("CONTENT_TYPE"))
         print("raw body bytes:", request.body[:200])
@@ -114,7 +118,8 @@ import requests
 from django.http import StreamingHttpResponse
 
 class ChatStreamAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    authentication_classes = [ApiKeyAuth]
+    permission_classes = [HasValidApiKey]
     throttle_classes = [ChatRateThrottle]
 
     def post(self, request):
@@ -219,7 +224,8 @@ class ChatStreamAPIView(APIView):
 # 3. 中断当前会话
 # ======================================================
 class CancelSessionAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    authentication_classes = [ApiKeyAuth]
+    permission_classes = [HasValidApiKey]
     def post(self, request):
         recorder = UsageRecorder(
             client_id=str(request.auth.id),
