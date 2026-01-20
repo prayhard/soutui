@@ -141,6 +141,111 @@ data: {"type":"error","stage":"adp_http","status":500,"body":"..."}
 
 ---
 
+## 4. WebSocket 接口
+
+> WebSocket 不走 `Base URL` 前缀，直接使用 `ws://<host>:<port>/ws/...`。
+
+### 4.1 语音识别 + 对话 + TTS（ASR + ADP + TTS）
+
+**接口**: `ws://<host>:<port>/ws/asr/pcm/`
+
+**描述**: 发送 PCM 音频到腾讯 ASR，识别完成后调用 ADP 生成回复，并将回复文本实时推送，同时在后台串行调用腾讯 TTS 生成音频流并以二进制分片返回。
+
+**连接后服务端会发送**:
+
+```json
+{"type": "ready"}
+```
+
+**客户端控制消息（text JSON）**:
+
+- `init`：必须先发送，用于注入会话参数。
+- `end`：结束音频输入。
+
+**init 示例**:
+
+```json
+{
+  "type": "init",
+  "session_id": "a29bae68-cb1c-489d-8097-6be78f136acf",
+  "visitor_biz_id": "2004001099116640832",
+  "app": "d",
+  "streaming_throttle": 10,
+  "tts_codec": "pcm"
+}
+```
+
+**end 示例**:
+
+```json
+{
+  "type": "end"
+}
+```
+
+**客户端音频数据**:
+
+- 发送 `bytes` 帧（PCM 16k）作为音频输入。
+
+**服务端文本消息类型**:
+
+- `init_ok`：init 成功。
+- `asr_raw`：透传腾讯 ASR 原始 JSON。
+- `asr_partial`：中间识别结果（`text`）。
+- `asr_final`：最终识别结果（`text`）。
+- `bot_start` / `bot_delta` / `bot_done`：ADP 生成回复流。
+- `tts_start` / `tts_meta` / `tts_done`：TTS 段落合成状态。
+- `error`：错误信息。
+
+**服务端二进制消息**:
+
+- TTS 音频分片（`bytes`）。
+
+**服务端消息示例（text JSON）**:
+
+```json
+{"type": "init_ok"}
+{"type": "asr_partial", "text": "你好"}
+{"type": "asr_final", "text": "你好"}
+{"type": "bot_start"}
+{"type": "bot_delta", "delta": "您好，"}
+{"type": "bot_done"}
+{"type": "tts_start", "seq": 1, "text": "您好。"}
+{"type": "tts_done", "seq": 1}
+```
+
+### 4.2 文本转语音（TTS）
+
+**接口**: `ws://<host>:<port>/ws/tts/pcm/`
+
+**描述**: 发送文本，服务端连接腾讯 TTS 并返回音频流。
+
+**连接后服务端会发送**:
+
+```json
+{"type": "ready"}
+```
+
+**客户端消息（text JSON）**:
+
+```json
+{
+  "text": "你好，欢迎使用语音合成"
+}
+```
+
+**服务端文本消息**:
+
+- `tencent_connected`：与腾讯 TTS 建联成功，返回 `session_id`。
+- 其他文本帧为腾讯 TTS 返回的 JSON（如 `final=1` 或错误码）。
+- `error`：错误信息。
+
+**服务端二进制消息**:
+
+- 音频分片（`bytes`）。
+
+---
+
 ## 附录：ADP SSE 代理（直连模式）
 
 > 该实现为函数视图 `adp_chat_stream`，但 URL 与上方 `chat/stream` 重复时，Django 将优先匹配列表中的第一个路由。
@@ -153,4 +258,3 @@ data: {"type":"error","stage":"adp_http","status":500,"body":"..."}
 data: {"delta": "..."}
 
 ```
-
