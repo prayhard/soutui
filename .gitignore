@@ -1,3 +1,6 @@
 .env
 api/.env
 soutui_db.sql
+sql/hotel_room_offer_v2.csv
+sql/hotel_comment_star.csv
+sql/hotel_list_poi.csv
