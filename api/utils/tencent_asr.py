@@ -93,7 +93,7 @@ def build_tencent_asr_ws_url(
     # 5) 最终 query 用 urlencode（它会处理其他参数；signature 已经是 safe 的字符串）
     #    注意：不要再对 signature 二次 quote
     result=f"wss://{raw_sign}&signature={params['signature']}"
-    print('result',result)
+    # print('result',result)
     return result
 
 

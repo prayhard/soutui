@@ -569,3 +569,381 @@ class Final_TencentPCMAsrConsumer(AsyncWebsocketConsumer):
                 self.tts_task.cancel()
         except:
             pass
+
+#====================================================================
+import json
+import asyncio
+import websockets
+from websockets.exceptions import ConnectionClosed
+from channels.generic.websocket import AsyncWebsocketConsumer
+
+class Agent_interaction(AsyncWebsocketConsumer):
+    async def connect(self):
+        await self.accept()
+        self.is_recording = False
+        # ==== init 注入 ====
+        self.session_id = None
+        self.visitor_biz_id = None
+        self.app = "d"
+        self.streaming_throttle = 10
+
+        # 输入/输出模式（可被 init 或每次消息覆盖）
+        self.input_mode = "audio"     # "audio" or "text"
+        self.reply_mode = "audio"     # "audio" or "text"
+
+        # ==== TTS ====
+        self.tts_codec = "pcm"        # "pcm" or "mp3"
+        self.tts_buffer = ""
+        self.tts_seq = 0
+        self.tts_queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+        # 当前 TTS task（用于打断/取消）
+        self._tts_current_task: asyncio.Task | None = None
+        self._tts_cancel_event = asyncio.Event()
+
+        self.tts_task = asyncio.create_task(self._tts_worker())
+
+        # ==== ASR ====
+        self.ending = False
+        self.last_asr_text = ""
+
+        # self.tc_url = build_tencent_asr_ws_url(
+        #     appid=os.getenv("APPID"),
+        #     secret_id=os.getenv("SecretId"),
+        #     secret_key=os.getenv("SecretKey"),
+        #     engine_model_type="16k_zh",
+        #     voice_format=1,
+        #     expired_seconds=300,
+        # )
+        #
+        # self.tc_ws = await websockets.connect(
+        #     self.tc_url,
+        #     ping_interval=20,
+        #     ping_timeout=20,
+        #     close_timeout=2,
+        #     max_size=None,
+        # )
+        # self.recv_task = asyncio.create_task(self._recv_from_tencent())
+        self.tc_ws = None
+        self.recv_task = None
+
+        await self.send(text_data=json.dumps({"type": "ready"}))
+
+    async def _ensure_asr_connected(self):
+        if self.tc_ws and not self.tc_ws.closed:
+            return
+        self.tc_url = build_tencent_asr_ws_url(
+            appid=os.getenv("APPID"),
+            secret_id=os.getenv("SecretId"),
+            secret_key=os.getenv("SecretKey"),
+            engine_model_type="16k_zh",
+            voice_format=1,
+            expired_seconds=300,
+        )
+        self.tc_ws = await websockets.connect(
+            self.tc_url,
+            ping_interval=20,
+            ping_timeout=20,
+            close_timeout=2,
+            max_size=None,
+        )
+        self.recv_task = asyncio.create_task(self._recv_from_tencent())
+
+    async def receive(self, text_data=None, bytes_data=None):
+        try:
+            # ===== 控制/文本消息 =====
+            if text_data:
+                msg = json.loads(text_data)
+                mtype = msg.get("type")
+
+                if mtype == "init":
+                    self.session_id = msg.get("session_id")
+                    self.visitor_biz_id = msg.get("visitor_biz_id")
+                    self.app = msg.get("app", "d")
+                    self.streaming_throttle = msg.get("streaming_throttle", 10)
+
+                    # 新增：输入/输出模式
+                    self.input_mode = msg.get("input_mode", self.input_mode)   # "audio"/"text"
+                    self.reply_mode = msg.get("reply_mode", self.reply_mode)   # "audio"/"text"
+
+                    # TTS codec 只有在 reply_mode="audio" 时有意义
+                    self.tts_codec = msg.get("tts_codec", self.tts_codec)
+
+                    await self.send(text_data=json.dumps({"type": "init_ok"}))
+                    return
+
+                if mtype == "end":
+                    self.is_recording = False
+                    self.ending = True
+                    await self.tc_ws.send(json.dumps({"type": "end"}))
+                    return
+
+                # 切换“本轮输入模式”：告诉后端接下来会发 bytes_data 音频
+                if mtype == "audio":
+                    self.is_recording = True
+                    self.input_mode = "audio"
+                    # barge-in：新一轮输入开始，先打断播报
+                    await self._interrupt_tts(reason="barge_in_audio_start")
+                    await self._ensure_asr_connected()
+                    await self.send(text_data=json.dumps({"type": "audio_mode_on"}))
+                    return
+
+                # 文本输入：不走 ASR，直接 agent
+                if mtype == "text":
+                    # barge-in：用户开口/发文字，就打断正在播的语音
+                    await self._interrupt_tts(reason="barge_in_text")
+
+                    text = (msg.get("text") or "").strip()
+                    if not text:
+                        await self.send(text_data=json.dumps({"type": "error", "detail": "empty text"}))
+                        return
+                    if not self.session_id or not self.visitor_biz_id:
+                        await self.send(text_data=json.dumps({
+                            "type": "error",
+                            "detail": "missing session_id / visitor_biz_id, please send init first"
+                        }))
+                        return
+
+                    # 本轮输出模式允许覆盖
+                    reply_mode = msg.get("reply_mode", self.reply_mode)
+                    tts_codec = msg.get("tts_codec", self.tts_codec)
+
+                    await self._run_adp_and_optional_tts(text, reply_mode=reply_mode, tts_codec=tts_codec)
+                    return
+
+                # 其他控制消息忽略或回 error
+                # await self.send(text_data=json.dumps({"type":"error","detail":f"unknown type: {mtype}"}))
+                return
+
+            # ===== 音频帧 =====
+            if bytes_data:
+                # 只有 input_mode=audio 才接受 bytes_data
+                if self.input_mode != "audio":
+                    await self.send(text_data=json.dumps({"type": "error", "detail": "bytes_data received but input_mode!=audio"}))
+                    return
+
+                # barge-in：用户开始说话就打断播报
+                if bytes_data:
+                    if self.is_recording and self._tts_current_task and not self._tts_current_task.done():
+                        await self._interrupt_tts(reason="barge_in_audio_frame")
+                    await self.tc_ws.send(bytes_data)
+
+        except ConnectionClosed:
+            await self.close(code=1011)
+        except Exception as e:
+            await self.send(text_data=json.dumps({"type": "error", "detail": f"receive_failed: {e}"}))
+            await self.close(code=1011)
+
+    async def _recv_from_tencent(self):
+        try:
+            async for msg in self.tc_ws:
+                data = json.loads(msg)
+
+                await self.send(text_data=json.dumps({"type": "asr_raw", "data": data}, ensure_ascii=False))
+
+                asr_text = ""
+                if isinstance(data, dict) and data.get("result"):
+                    asr_text = data["result"].get("voice_text_str") or ""
+                    if asr_text:
+                        self.last_asr_text = asr_text
+                        await self.send(text_data=json.dumps({"type": "asr_partial", "text": asr_text}, ensure_ascii=False))
+
+                if isinstance(data, dict) and data.get("final") == 1:
+                    final_text = (asr_text or self.last_asr_text).strip()
+                    await self.send(text_data=json.dumps({"type": "asr_final", "text": final_text}, ensure_ascii=False))
+
+                    if not final_text:
+                        await self.send(text_data=json.dumps({"type": "error", "detail": "empty final_text"}))
+                        continue
+                    if not self.session_id or not self.visitor_biz_id:
+                        await self.send(text_data=json.dumps({
+                            "type": "error",
+                            "detail": "missing session_id / visitor_biz_id, please send init first"
+                        }))
+                        continue
+
+                    # 新一轮用户话结束，准备问 agent 前也打断一次（避免上一轮残留）
+                    await self._interrupt_tts(reason="new_turn_from_asr_final")
+
+                    await self._run_adp_and_optional_tts(
+                        user_text=final_text,
+                        reply_mode=self.reply_mode,
+                        tts_codec=self.tts_codec,
+                    )
+
+        except ConnectionClosed:
+            try:
+                await self.send(text_data=json.dumps({"type": "asr_closed"}))
+            except:
+                pass
+        # ✅ 不要关闭前端 ws，只把 tc_ws 标记掉
+            self.tc_ws = None
+            return
+        except Exception as e:
+            try:
+                await self.send(text_data=json.dumps({"type": "error", "detail": f"asr_recv_failed: {e}"}))
+            except:
+                pass
+            await self.close(code=1011)
+        finally:
+            try:
+                await self.tc_ws.close()
+            except:
+                pass
+
+    # --- 句子切分 ---
+    def _pop_ready_segments(self):
+        buf = self.tts_buffer
+        out = []
+        start = 0
+        for i, ch in enumerate(buf):
+            if _SENT_END_RE.match(ch):
+                seg = buf[start:i + 1].strip()
+                if seg:
+                    out.append(seg)
+                start = i + 1
+        self.tts_buffer = buf[start:]
+        return out
+
+    async def _run_adp_and_optional_tts(self, user_text: str, reply_mode: str, tts_codec: str):
+        await self.send(text_data=json.dumps({"type": "bot_start"}, ensure_ascii=False))
+
+        # 本轮 codec 可覆盖
+        self.tts_codec = tts_codec
+
+        try:
+            async for delta in adp_stream_reply(
+                session_id=self.session_id,
+                visitor_biz_id=self.visitor_biz_id,
+                app=self.app,
+                content=user_text,
+                streaming_throttle=self.streaming_throttle,
+            ):
+                # 1) 文本实时输出（无论是否 TTS，都要给前端文本）
+                await self.send(text_data=json.dumps({"type": "bot_delta", "delta": delta}, ensure_ascii=False))
+
+                # 2) 若本轮需要语音：累积并切句入队
+                if reply_mode == "audio":
+                    self.tts_buffer += delta
+                    segs = self._pop_ready_segments()
+                    for seg in segs:
+                        await self.tts_queue.put(seg)
+
+        except Exception as e:
+            await self.send(text_data=json.dumps({"type": "error", "detail": f"adp_failed: {e}"}))
+            return
+
+        # 流结束：把尾巴也丢给 TTS
+        if reply_mode == "audio":
+            tail = self.tts_buffer.strip()
+            self.tts_buffer = ""
+            if tail:
+                await self.tts_queue.put(tail)
+        else:
+            # 不做 TTS 时也清空 buffer，避免污染下一轮
+            self.tts_buffer = ""
+
+        await self.send(text_data=json.dumps({"type": "bot_done"}, ensure_ascii=False))
+
+    # ========= TTS 打断/取消与安全清理 =========
+    async def _interrupt_tts(self, reason: str):
+        """
+        用户插话/新一轮输入：打断正在播报的 TTS（barge-in）
+        - 清 buffer
+        - 清队列
+        - cancel 当前 TTS task
+        """
+        self.tts_buffer = ""
+        await self._drain_tts_queue()
+        await self._cancel_tts_current()
+        try:
+            await self.send(text_data=json.dumps({"type": "tts_interrupted", "reason": reason}, ensure_ascii=False))
+        except:
+            pass
+
+    async def _drain_tts_queue(self):
+        try:
+            while True:
+                item = self.tts_queue.get_nowait()
+                if item is None:
+                    # 保留退出信号
+                    await self.tts_queue.put(None)
+                    break
+        except asyncio.QueueEmpty:
+            return
+
+    async def _cancel_tts_current(self):
+        self._tts_cancel_event.set()
+        task = self._tts_current_task
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except:
+                pass
+        self._tts_current_task = None
+        self._tts_cancel_event.clear()
+
+    async def _tts_worker(self):
+        while True:
+            seg = await self.tts_queue.get()
+            if seg is None:
+                return
+
+            self.tts_seq += 1
+            seq = self.tts_seq
+
+            await self.send(text_data=json.dumps({
+                "type": "tts_start", "seq": seq, "codec": self.tts_codec, "text": seg
+            }, ensure_ascii=False))
+
+            try:
+                self._tts_current_task = asyncio.create_task(self._tts_stream_one(seg=seg, seq=seq))
+                await self._tts_current_task
+                await self.send(text_data=json.dumps({"type": "tts_done", "seq": seq}, ensure_ascii=False))
+            except asyncio.CancelledError:
+                # 被 barge-in 打断
+                continue
+            except Exception as e:
+                await self.send(text_data=json.dumps({"type": "error", "detail": f"tts_failed: {e}"}))
+                continue
+            finally:
+                self._tts_current_task = None
+
+    async def _tts_stream_one(self, seg: str, seq: int):
+        async for kind, payload in tencent_tts_stream(text=seg, codec=self.tts_codec):
+            if self._tts_cancel_event.is_set():
+                raise asyncio.CancelledError()
+
+            if kind == "meta":
+                await self.send(text_data=json.dumps({"type": "tts_meta", "seq": seq, "meta": payload}, ensure_ascii=False))
+            else:
+                await self.send(bytes_data=payload)
+
+    async def disconnect(self, close_code):
+        # 1) 停 ASR recv task
+        try:
+            if hasattr(self, "recv_task") and self.recv_task:
+                self.recv_task.cancel()
+        except:
+            pass
+
+        # 2) 关腾讯 ASR ws
+        try:
+            if hasattr(self, "tc_ws") and self.tc_ws:
+                await self.tc_ws.close()
+        except:
+            pass
+
+        # 3) 停 TTS：cancel 当前 + 通知 worker 退出
+        try:
+            await self._cancel_tts_current()
+        except:
+            pass
+
+        try:
+            await self.tts_queue.put(None)
+            if hasattr(self, "tts_task") and self.tts_task:
+                self.tts_task.cancel()
+        except:
+            pass

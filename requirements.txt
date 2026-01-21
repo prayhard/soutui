@@ -15,4 +15,7 @@ channels-redis>=4.2.0
 httpx>=0.24
 websockets>=12.0
 requests>=2.31
-
+daphne
+channels
+channels-redis
+uvicorn

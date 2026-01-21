@@ -50,7 +50,7 @@ def build_tencent_tts_ws_url(
     query_raw=f"Action=TextToStreamAudioWS&AppId={int(appid)}&Codec={params['codec']}&EnableSubtitle=True&Expired={params['expired']}&SampleRate=16000&SecretId={params['secretid']}&SessionId={params['SessionId']}&Speed={params['speed']}&Text={params['text']}&Timestamp={params['timestamp']}&VoiceType={params['VoiceType']}&Volume={params['Volume']}"
     raw_sign = f"tts.cloud.tencent.com/stream_ws?{query_raw}"
     result=f"wss://{raw_sign}&Signature={params['signature']}"
-    print('result',result)
+    # print('result',result)
     return result
 
 #
