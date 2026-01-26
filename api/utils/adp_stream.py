@@ -52,13 +52,27 @@ async def adp_stream_reply(*, session_id: str, visitor_biz_id: str, app: str, co
                 except json.JSONDecodeError:
                     continue
                 # 这里按你 ADP 实际返回结构微调
+                # yield {"type": "result", "data": json.dumps(obj, ensure_ascii=False, default=str)}
                 if obj.get("type") == "reply":
+                    # if obj.get("payload", {}).get("is_from_self", ""):
+                    #     continue
+                    flag = obj.get("payload",{}).get("is_from_self", False)
+
+                    # 兼容 bool / int / str
+                    is_from_self = (flag is True) or (flag == 1) or (
+                                isinstance(flag, str) and flag.lower() in ("true", "1", "yes"))
+                    if is_from_self:
+                        continue
                     delta = obj.get("payload", {}).get("content", "")
                     if isinstance(delta, str) and delta:
                         print('delta',delta)
-                        yield delta
+                        yield {"type":"result","data":delta}
                 elif obj.get("type") == "thought":
                     delta = obj.get("payload", {}).get("procedures",[])[0].get("debugging",{}).get("content","")
                     if isinstance(delta, str) and delta:
                         print('think', delta)
-                        yield delta
+                        yield {"type":"think","data":delta}
+                elif obj.get("type") == "token_stat":
+                    delta = obj.get("payload", {}).get("procedures", [])[0].get("title", "")
+                    if isinstance(delta, str) and delta:
+                        yield {"type": "process", "data": delta}

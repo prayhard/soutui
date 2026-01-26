@@ -54,7 +54,7 @@ async def test_text_only():
             "streaming_throttle": 10
         }))
 
-        await ws.send(json.dumps({"type": "text","text": "我要去杭州玩，给我推荐一下酒店", "reply_mode": "text"}))
+        await ws.send(json.dumps({"type": "text","text": "临安人民广场附近的酒店推荐。", "reply_mode": "text"}))
 
         await recv_loop(ws, stop_after_sec=30)
 
@@ -149,10 +149,10 @@ async def test_barge_in():
 
 async def main():
     await test_text_only()
-    await test_text_with_tts()
+    # await test_text_with_tts()
     # 如果你暂时没有 pcm 文件/音频链路还没准备好，可以先注释掉下面两项
-    await test_audio_asr_and_tts()
-    await test_barge_in()
+    # await test_audio_asr_and_tts()
+    # await test_barge_in()
 
 if __name__ == "__main__":
     asyncio.run(main())
