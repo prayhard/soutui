@@ -17,8 +17,8 @@ def build_tencent_tts_ws_url(
     ts = int(time.time())
     expired = ts + int(expired_seconds)
     SessionId = int(str(uuid.uuid4().int)[:128])
-    speed = 0
-    VoiceType = 601015
+    speed = 2
+    VoiceType = 501004
     Volume = 0
     # 1) 除 signature 外的参数（值保持原样，不要 quote）
     params = {

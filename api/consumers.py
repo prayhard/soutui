@@ -791,71 +791,7 @@ class Agent_interaction(AsyncWebsocketConsumer):
         self.tts_buffer = buf[start:]
         return out
 
-    # async def _run_adp_and_optional_tts(self, user_text: str, reply_mode: str, tts_codec: str):
-    #     await self.send(text_data=json.dumps({"type": "bot_start"}, ensure_ascii=False))
-    #
-    #     # 本轮 codec 可覆盖
-    #     self.tts_codec = tts_codec
-    #
-    #     try:
-    #         flag = False
-    #         async for delta in adp_stream_reply(
-    #             session_id=self.session_id,
-    #             visitor_biz_id=self.visitor_biz_id,
-    #             app=self.app,
-    #             content=user_text,
-    #             streaming_throttle=self.streaming_throttle,
-    #         ):
-    #             # 1) 文本实时输出（无论是否 TTS，都要给前端文本）
-    #             await self.send(text_data=json.dumps({"type": delta["type"], "delta": delta["data"]}, ensure_ascii=False))
-    #
-    #             # 2) 若本轮需要语音：累积并切句入队
-    #             if reply_mode == "audio":
-    #                 if delta["type"] == "process":
-    #                     continue
-    #                 if delta["type"] == "result":
-    #                     if "{" in delta["data"]:
-    #                         flag = True
-    #                         idx = delta["data"].find('{')
-    #                         before = delta["data"][:idx] if idx != -1 else delta["data"]
-    #                         self.tts_buffer += before
-    #                         segs = self._pop_ready_segments()
-    #                         for seg in segs:
-    #                             await self.tts_queue.put(seg)
-    #                     elif "}" in delta["data"]:
-    #                         flag = False
-    #                         idx = delta["data"].find('}')
-    #                         after = delta["data"][idx + 1:] if idx != -1 else ""
-    #                         self.tts_buffer += after
-    #                         segs = self._pop_ready_segments()
-    #                         for seg in segs:
-    #                             await self.tts_queue.put(seg)
-    #                         continue
-    #                 if flag:
-    #                     continue
-    #                 else:
-    #                     self.tts_buffer += delta["data"]
-    #                     segs = self._pop_ready_segments()
-    #                     for seg in segs:
-    #                         await self.tts_queue.put(seg)
-    #
-    #     except Exception as e:
-    #         await self.send(text_data=json.dumps({"type": "error", "detail": f"adp_failed: {e}"}))
-    #         return
-    #
-    #     # 流结束：把尾巴也丢给 TTS
-    #     if reply_mode == "audio":
-    #         tail = self.tts_buffer.strip()
-    #         self.tts_buffer = ""
-    #         if tail:
-    #             await self.tts_queue.put(tail)
-    #     else:
-    #         # 不做 TTS 时也清空 buffer，避免污染下一轮
-    #         self.tts_buffer = ""
-    #
-    #     await self.send(text_data=json.dumps({"type": "bot_done"}, ensure_ascii=False))
 
-    # ========= TTS 打断/取消与安全清理 =========
     async def _run_adp_and_optional_tts(self, user_text: str, reply_mode: str, tts_codec: str):
         await self.send(text_data=json.dumps({"type": "bot_start"}, ensure_ascii=False))
 
@@ -891,6 +827,9 @@ class Agent_interaction(AsyncWebsocketConsumer):
                     continue
 
                 if delta["type"] == "process":
+                    continue
+
+                if delta["type"] == "think":
                     continue
 
                 if delta["type"] != "result":
@@ -956,20 +895,6 @@ class Agent_interaction(AsyncWebsocketConsumer):
 
         await self.send(text_data=json.dumps({"type": "bot_done"}, ensure_ascii=False))
 
-    # async def _interrupt_tts(self, reason: str):
-    #     """
-    #     用户插话/新一轮输入：打断正在播报的 TTS（barge-in）
-    #     - 清 buffer
-    #     - 清队列
-    #     - cancel 当前 TTS task
-    #     """
-    #     self.tts_buffer = ""
-    #     await self._drain_tts_queue()
-    #     await self._cancel_tts_current()
-    #     try:
-    #         await self.send(text_data=json.dumps({"type": "tts_interrupted", "reason": reason}, ensure_ascii=False))
-    #     except:
-    #         pass
 
     async def _interrupt_tts(self, reason: str):
         """
@@ -990,17 +915,6 @@ class Agent_interaction(AsyncWebsocketConsumer):
         except:
             pass
 
-
-    # async def _drain_tts_queue(self):
-    #     try:
-    #         while True:
-    #             item = self.tts_queue.get_nowait()
-    #             if item is None:
-    #                 # 保留退出信号
-    #                 await self.tts_queue.put(None)
-    #                 break
-    #     except asyncio.QueueEmpty:
-    #         return
 
     async def _drain_tts_queue(self):
         try:
@@ -1026,31 +940,6 @@ class Agent_interaction(AsyncWebsocketConsumer):
         self._tts_current_task = None
         self._tts_cancel_event.clear()
 
-    # async def _tts_worker(self):
-    #     while True:
-    #         seg = await self.tts_queue.get()
-    #         if seg is None:
-    #             return
-    #
-    #         self.tts_seq += 1
-    #         seq = self.tts_seq
-    #
-    #         await self.send(text_data=json.dumps({
-    #             "type": "tts_start", "seq": seq, "codec": self.tts_codec, "text": seg
-    #         }, ensure_ascii=False))
-    #
-    #         try:
-    #             self._tts_current_task = asyncio.create_task(self._tts_stream_one(seg=seg, seq=seq))
-    #             await self._tts_current_task
-    #             await self.send(text_data=json.dumps({"type": "tts_done", "seq": seq}, ensure_ascii=False))
-    #         except asyncio.CancelledError:
-    #             # 被 barge-in 打断
-    #             continue
-    #         except Exception as e:
-    #             await self.send(text_data=json.dumps({"type": "error", "detail": f"tts_failed: {e}"}))
-    #             continue
-    #         finally:
-    #             self._tts_current_task = None
 
     async def _tts_worker(self):
         """

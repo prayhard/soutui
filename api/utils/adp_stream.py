@@ -38,11 +38,9 @@ async def adp_stream_reply(*, session_id: str, visitor_biz_id: str, app: str, co
     async with httpx.AsyncClient(timeout=None) as client:
         async with client.stream("POST", ADP_URL, headers=headers, json=payload) as resp:
             resp.raise_for_status()
-
             async for line in resp.aiter_lines():
                 if not line or not line.startswith("data:"):
                     continue
-
                 data_str = line[5:].strip()
                 if data_str == "[DONE]":
                     break
@@ -66,13 +64,16 @@ async def adp_stream_reply(*, session_id: str, visitor_biz_id: str, app: str, co
                     delta = obj.get("payload", {}).get("content", "")
                     if isinstance(delta, str) and delta:
                         print('delta',delta)
-                        yield {"type":"result","data":delta}
+                        yield {"type": "result","data": delta}
                 elif obj.get("type") == "thought":
-                    delta = obj.get("payload", {}).get("procedures",[])[0].get("debugging",{}).get("content","")
-                    if isinstance(delta, str) and delta:
-                        print('think', delta)
-                        yield {"type":"think","data":delta}
-                elif obj.get("type") == "token_stat":
-                    delta = obj.get("payload", {}).get("procedures", [])[0].get("title", "")
-                    if isinstance(delta, str) and delta:
-                        yield {"type": "process", "data": delta}
+                    objs = obj.get("payload", {}).get("procedures",[])
+                    for index,item in enumerate(objs):
+                        try:
+                            if item.get("debugging",{}).get("content",""):
+                                delta=item.get("debugging",{}).get("content","")
+                                if len(delta)>30:
+                                    continue
+                                yield {"type": "think", "data": delta}
+                        except:
+                            continue
+

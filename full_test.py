@@ -54,9 +54,9 @@ async def test_text_only():
             "streaming_throttle": 10
         }))
 
-        await ws.send(json.dumps({"type": "text","text": "临安人民广场附近的酒店推荐。", "reply_mode": "text"}))
+        await ws.send(json.dumps({"type": "text","text": "上海迪士尼附近的酒店。", "reply_mode": "text"}))
 
-        await recv_loop(ws, stop_after_sec=30)
+        await recv_loop(ws, stop_after_sec=180)
 
 
 async def test_text_with_tts():
