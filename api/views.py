@@ -312,6 +312,54 @@ def adp_chat_stream(request):
     )
 
 
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+
+from api.models import AdpChatSession
+from api.serializers import AdpChatFeedbackSerializer
+
+class AdpChatFeedbackAPIView(APIView):
+    """
+    PATCH /api/chat/feedback/<int:pk>/
+    body: { "feedback": true }  或 { "feedback": false }
+    """
+    def patch(self, request, pk: int):
+        try:
+            obj = AdpChatSession.objects.get(pk=pk)
+        except AdpChatSession.DoesNotExist:
+            return Response({"detail": "not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = AdpChatFeedbackSerializer(obj, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+
+from api.models import AdpChatSession
+from api.serializers import AdpChatFeedbackSerializer
+
+
+class AdpChatFeedbackAPIView(APIView):
+    """
+    PATCH /api/chat/feedback/<int:pk>/
+    body: { "feedback": true }  或 { "feedback": false }
+    """
+    def patch(self, request, pk: int):
+        try:
+            obj = AdpChatSession.objects.get(pk=pk)
+        except AdpChatSession.DoesNotExist:
+            return Response({"detail": "not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = AdpChatFeedbackSerializer(obj, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
 # $payload = @{ hotel_name = @("汉庭酒店(包头民族东路店)","全季酒店（呼和浩特市政府东站店）") } | ConvertTo-Json -Depth 5
 # $bytes = [System.Text.Encoding]::UTF8.GetBytes($payload)
 #

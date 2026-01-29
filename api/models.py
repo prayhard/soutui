@@ -153,3 +153,33 @@ class ApiClient(models.Model):
     class Meta:
         db_table = "api_client"
 
+from django.db import models
+
+
+class AdpChatSession(models.Model):
+    """
+    存储与 ADP 的一次问答记录（单轮）
+    """
+    session_id = models.CharField(max_length=128, db_index=True)  # 你说的会话id(key)，可用 session_id
+    visitor_biz_id = models.CharField(max_length=128, blank=True, null=True, db_index=True)
+    app = models.CharField(max_length=32, default="s")
+
+    user_question = models.TextField()
+    model_answer = models.TextField(blank=True, default="")
+
+    # 用户反馈：True/False；未反馈时为 None
+    feedback = models.BooleanField(null=True, blank=True, default=None)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["session_id", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.session_id} | {self.created_at:%Y-%m-%d %H:%M:%S}"
+
+

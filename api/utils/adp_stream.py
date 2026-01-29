@@ -2,8 +2,9 @@
 import os
 import json
 import httpx
-
-ADP_URL = "https://wss.lke.cloud.tencent.com/v1/qbot/chat/sse"
+from dotenv import load_dotenv
+load_dotenv()
+ADP_URL = os.getenv("ADP_URL")
 
 def pick_bot_app_key(app_flag: str) -> str:
     if app_flag == "s":

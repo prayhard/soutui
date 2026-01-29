@@ -23,5 +23,11 @@ class TencentSSESerializer(serializers.Serializer):
     workflow_status = serializers.ChoiceField(required=False, default="disable", choices=["disable", "enable"])
     tcadp_user_id = serializers.CharField(required=False, default="", allow_blank=True)
 
+from api.models import AdpChatSession
+class AdpChatFeedbackSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AdpChatSession
+        fields = ["id", "feedback"]
+
 
 # curl -N -X POST "http://127.0.0.1:8000/api/chat/stream/" -H "Content-Type: application/json" -H "X-API-Key: test-key-123" -d "{\"bot_app_key\":\"xxx\",\"visitor_biz_id\":\"u1\",\"content\":\"你好\"}"
