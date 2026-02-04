@@ -694,6 +694,10 @@ class Agent_interaction(AsyncWebsocketConsumer):
                     await self.send(text_data=json.dumps({"type": "audio_mode_on"}))
                     return
 
+                if mtype == "stop":
+                    await self._interrupt_tts(reason="barge_in_audio_start")
+                    await self.tc_ws.send(json.dumps({"type": "end"}))
+                    return
                 # 文本输入：不走 ASR，直接 agent
                 if mtype == "text":
                     # barge-in：用户开口/发文字，就打断正在播的语音
@@ -811,109 +815,6 @@ class Agent_interaction(AsyncWebsocketConsumer):
         self.tts_buffer = buf[start:]
         return out
 
-
-    # async def _run_adp_and_optional_tts(self, user_text: str, reply_mode: str, tts_codec: str):
-    #     await self.send(text_data=json.dumps({"type": "bot_start"}, ensure_ascii=False))
-    #
-    #     # 本轮 codec 可覆盖
-    #     self.tts_codec = tts_codec
-    #
-    #     # 每轮唯一 id，用于判定这一轮的 tts 是否结束
-    #     self.turn_id += 1
-    #     cur_turn = self.turn_id
-    #
-    #     # 这一轮如果要 TTS，就先把 turn_done 置为未完成
-    #     if reply_mode == "audio":
-    #         self._tts_turn_done.clear()
-    #
-    #     try:
-    #         in_json = False
-    #
-    #         async for delta in adp_stream_reply(
-    #             session_id=self.session_id,
-    #             visitor_biz_id=self.visitor_biz_id,
-    #             app=self.app,
-    #             content=user_text,
-    #             streaming_throttle=self.streaming_throttle,
-    #         ):
-    #             # 1) 文本实时输出（无论是否 TTS，都给前端）
-    #             await self.send(text_data=json.dumps(
-    #                 {"type": delta["type"], "delta": delta["data"]},
-    #                 ensure_ascii=False
-    #             ))
-    #
-    #             # 2) TTS：把所有 result 文本按句切分入队（屏蔽 JSON 块）
-    #             if reply_mode != "audio":
-    #                 continue
-    #
-    #             if delta["type"] == "process":
-    #                 continue
-    #
-    #             if delta["type"] == "think":
-    #                 continue
-    #
-    #             if delta["type"] != "result":
-    #                 continue
-    #
-    #             text = delta["data"] if isinstance(delta["data"], str) else str(delta["data"])
-    #             if not text:
-    #                 continue
-    #
-    #             # ===== JSON 屏蔽逻辑（修复版）=====
-    #             # case A: 不在 JSON 中，遇到 '{'：只取 '{' 前面
-    #             if (not in_json) and ("{" in text):
-    #                 in_json = True
-    #                 idx = text.find("{")
-    #                 before = text[:idx]
-    #                 if before:
-    #                     self.tts_buffer += before
-    #                     for seg in self._pop_ready_segments():
-    #                         await self.tts_queue.put(("SEG", cur_turn, seg))
-    #                 continue  # ✅ 当前 delta 已处理完，别再走下面追加
-    #
-    #             # case B: 在 JSON 中：如果遇到 '}'，只取 '}' 后面并退出 JSON
-    #             if in_json:
-    #                 if "}" in text:
-    #                     in_json = False
-    #                     idx = text.find("}")
-    #                     after = text[idx + 1:]
-    #                     if after:
-    #                         self.tts_buffer += after
-    #                         for seg in self._pop_ready_segments():
-    #                             await self.tts_queue.put(("SEG", cur_turn, seg))
-    #                 # JSON 内其它内容全部跳过
-    #                 continue
-    #
-    #             # case C: 普通文本
-    #             self.tts_buffer += text
-    #             for seg in self._pop_ready_segments():
-    #                 await self.tts_queue.put(("SEG", cur_turn, seg))
-    #
-    #     except Exception as e:
-    #         await self.send(text_data=json.dumps({"type": "error", "detail": f"adp_failed: {e}"}))
-    #         # 失败也要把本轮结束掉，避免前端卡住
-    #         if reply_mode == "audio":
-    #             await self.tts_queue.put(("TURN_END", cur_turn, None))
-    #             await self._tts_turn_done.wait()
-    #         return
-    #
-    #     # ===== 流结束：把尾巴也丢给 TTS，然后等 TTS 播完 =====
-    #     if reply_mode == "audio":
-    #         tail = self.tts_buffer.strip()
-    #         self.tts_buffer = ""
-    #         if tail:
-    #             await self.tts_queue.put(("SEG", cur_turn, tail))
-    #
-    #         # 给 worker 一个“本轮结束”信号（不会退出 worker）
-    #         await self.tts_queue.put(("TURN_END", cur_turn, None))
-    #
-    #         # ✅ 等本轮 TTS 真正发送完（关键）
-    #         await self._tts_turn_done.wait()
-    #
-    #     else:
-    #         self.tts_buffer = ""
-    #
-    #     await self.send(text_data=json.dumps({"type": "bot_done"}, ensure_ascii=False))
     async def _run_adp_and_optional_tts(self, user_text: str, reply_mode: str, tts_codec: str):
         await self.send(text_data=json.dumps({"type": "bot_start"}, ensure_ascii=False))
 

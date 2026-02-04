@@ -58,10 +58,14 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 CORS_ALLOW_METHODS = [
+    "DELETE",
     "GET",
-    "POST",
     "OPTIONS",
+    "PATCH",
+    "POST",
+    "PUT",
 ]
+
 ROOT_URLCONF = 'mysite.urls'
 
 TEMPLATES = [
@@ -160,6 +164,8 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",  # React default port
+    "http://192.168.38.180:3000",
+    "http://192.168.38.194:3000"
 ]
 
 ADP_BASE_URL = os.getenv("ADP_BASE_URL", "").rstrip("/")
@@ -203,6 +209,7 @@ from corsheaders.defaults import default_headers
 # 允许前端流式（SSE）必要 header
 CORS_ALLOW_HEADERS = list(default_headers) + [
     "X-API-Key",
+    "authorization",
 ]
 
 # SSE 推荐
